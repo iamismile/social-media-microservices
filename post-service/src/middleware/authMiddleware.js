@@ -10,7 +10,7 @@ const authenticateRequest = (req, res, next) => {
     });
   }
 
-  req.user = userId;
+  req.user = { userId };
   next();
 };
 
