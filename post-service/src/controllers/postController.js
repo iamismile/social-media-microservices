@@ -2,6 +2,16 @@ const logger = require("../utils/logger");
 const Post = require("../models/Post");
 const { validateCreatePost } = require("../utils/validation");
 
+const invalidatePostCache = async (req, input) => {
+  const cachedKey = `post:${input}`;
+  await req.redisClient.del(cachedKey);
+
+  const keys = await req.redisClient.keys("posts:*");
+  if (keys.length > 0) {
+    await req.redisClient.del(...keys);
+  }
+};
+
 const createPost = async (req, res) => {
   logger.info("Post create endpoint hit...");
   try {
@@ -23,8 +33,11 @@ const createPost = async (req, res) => {
       mediaIds: mediaIds || [],
     });
 
-    logger.info("Post created successfully", newlyCreatedPost);
     await newlyCreatedPost.save();
+    // invalidate cache
+    await invalidatePostCache(req, newlyCreatedPost._id.toString());
+    logger.info("Post created successfully", newlyCreatedPost);
+
     res.status(201).json({
       success: true,
       message: "Post created successfully",
@@ -39,7 +52,43 @@ const createPost = async (req, res) => {
 };
 
 const getAllPosts = async (req, res) => {
+  logger.info("Post get all endpoint hit...");
   try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const startIndex = (page - 1) * limit;
+
+    // first return from cache if exists
+    const cacheKey = `posts:${page}:${limit}`;
+    const cachedPosts = await req.redisClient.get(cacheKey);
+    if (cachedPosts) {
+      return res.status(200).json({
+        success: true,
+        ...JSON.parse(cachedPosts),
+      });
+    }
+
+    const posts = await Post.find({})
+      .sort({ createdAt: -1 })
+      .skip(startIndex)
+      .limit(limit);
+
+    const totalNoOfPosts = await Post.countDocuments();
+
+    const result = {
+      posts,
+      currentPage: page,
+      totalPages: Math.ceil(totalNoOfPosts / limit),
+      totalPosts: totalNoOfPosts,
+    };
+
+    // save response in redis cache
+    await req.redisClient.setex(cacheKey, 300, JSON.stringify(result));
+
+    res.status(200).json({
+      success: true,
+      ...result,
+    });
   } catch (err) {
     logger.error("Posts fetching error occurred", err);
     res.status(500).json({
@@ -50,7 +99,38 @@ const getAllPosts = async (req, res) => {
 };
 
 const getPost = async (req, res) => {
+  logger.info("Post get one endpoint hit...");
   try {
+    const postId = req.params.id;
+
+    // first return from cache if exists
+    const cacheKey = `post:${postId}`;
+    const cachedPost = await req.redisClient.get(cacheKey);
+    if (cachedPost) {
+      return res.status(200).json({
+        success: true,
+        post: JSON.parse(cachedPost),
+      });
+    }
+
+    const post = await Post.findById(postId);
+    if (!post) {
+      return res.status(404).json({
+        success: false,
+        message: "Post not found",
+      });
+    }
+
+    // convert mongoose document to plain object
+    const postData = post.toObject();
+
+    // save response in redis cache
+    await req.redisClient.setex(cacheKey, 300, JSON.stringify(postData));
+
+    res.status(200).json({
+      success: true,
+      post: postData,
+    });
   } catch (err) {
     logger.error("Post fetching error occurred", err);
     res.status(500).json({
@@ -61,7 +141,27 @@ const getPost = async (req, res) => {
 };
 
 const deletePost = async (req, res) => {
+  logger.info("Post delete endpoint hit...");
   try {
+    const post = await Post.findOneAndDelete({
+      _id: req.params.id,
+      user: req.user.userId,
+    });
+    if (!post) {
+      return res.status(404).json({
+        success: false,
+        message: "Post not found",
+      });
+    }
+
+    // invalidate cache
+    await invalidatePostCache(req, req.params.id);
+    logger.info("Post deleted successfully", post.toObject());
+
+    res.status(200).json({
+      success: true,
+      message: "Post deleted successfully",
+    });
   } catch (err) {
     logger.error("Post delete error occurred", err);
     res.status(500).json({
@@ -73,4 +173,7 @@ const deletePost = async (req, res) => {
 
 module.exports = {
   createPost,
+  getAllPosts,
+  getPost,
+  deletePost,
 };
