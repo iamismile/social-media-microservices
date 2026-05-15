@@ -76,7 +76,7 @@ app.use(
 
     // Mutate outgoing request options before they're sent upstream.
     proxyReqOptDecorator: (proxyReqOpts, srcReq) => {
-      proxyReqOpts.headers["Content-Type"] = "application/json";
+      proxyReqOpts.headers["content-type"] = "application/json";
       return proxyReqOpts;
     },
 
@@ -99,7 +99,7 @@ app.use(
 
     // Mutate outgoing request options before they're sent upstream.
     proxyReqOptDecorator: (proxyReqOpts, srcReq) => {
-      proxyReqOpts.headers["Content-Type"] = "application/json";
+      proxyReqOpts.headers["content-type"] = "application/json";
       proxyReqOpts.headers["x-user-id"] = srcReq.user.userId;
 
       return proxyReqOpts;
@@ -115,6 +115,37 @@ app.use(
   }),
 );
 
+// setting up proxy for media service
+app.use(
+  "/v1/media",
+  validateToken,
+  proxy(process.env.MEDIA_SERVICE_URL, {
+    ...proxyOptions,
+
+    // Mutate outgoing request options before they're sent upstream.
+    proxyReqOptDecorator: (proxyReqOpts, srcReq) => {
+      proxyReqOpts.headers["x-user-id"] = srcReq.user.userId;
+
+      const contentType = srcReq.headers["content-type"] || "";
+      if (!contentType.startsWith("multipart/form-data")) {
+        proxyReqOpts.headers["content-type"] = "application/json";
+      }
+
+      return proxyReqOpts;
+    },
+
+    // Transform the upstream response before sending to client.
+    userResDecorator: (proxyRes, proxyResData, userReq, userRes) => {
+      logger.info(
+        `Response received from Media service: ${proxyRes.statusCode}`,
+      );
+      return proxyResData;
+    },
+
+    parseReqBody: false, // Don't let the proxy parse the body, especially for file uploads
+  }),
+);
+
 // error handler
 app.use(errorHandler);
 
@@ -124,5 +155,6 @@ app.listen(PORT, () => {
     `Identity service is running on ${process.env.IDENTITY_SERVICE_URL}`,
   );
   logger.info(`Post service is running on ${process.env.POST_SERVICE_URL}`);
+  logger.info(`Media service is running on ${process.env.MEDIA_SERVICE_URL}`);
   logger.info(`Redis URL ${process.env.REDIS_URL}`);
 });
