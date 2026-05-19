@@ -146,6 +146,31 @@ app.use(
   }),
 );
 
+// setting up proxy for search service
+app.use(
+  "/v1/search",
+  validateToken,
+  proxy(process.env.SEARCH_SERVICE_URL, {
+    ...proxyOptions,
+
+    // Mutate outgoing request options before they're sent upstream.
+    proxyReqOptDecorator: (proxyReqOpts, srcReq) => {
+      proxyReqOpts.headers["content-type"] = "application/json";
+      proxyReqOpts.headers["x-user-id"] = srcReq.user.userId;
+
+      return proxyReqOpts;
+    },
+
+    // Transform the upstream response before sending to client.
+    userResDecorator: (proxyRes, proxyResData, userReq, userRes) => {
+      logger.info(
+        `Response received from Search service: ${proxyRes.statusCode}`,
+      );
+      return proxyResData;
+    },
+  }),
+);
+
 // error handler
 app.use(errorHandler);
 
@@ -156,5 +181,6 @@ app.listen(PORT, () => {
   );
   logger.info(`Post service is running on ${process.env.POST_SERVICE_URL}`);
   logger.info(`Media service is running on ${process.env.MEDIA_SERVICE_URL}`);
+  logger.info(`Search service is running on ${process.env.SEARCH_SERVICE_URL}`);
   logger.info(`Redis URL ${process.env.REDIS_URL}`);
 });

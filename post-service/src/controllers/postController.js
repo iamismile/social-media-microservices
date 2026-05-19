@@ -35,6 +35,15 @@ const createPost = async (req, res) => {
     });
 
     await newlyCreatedPost.save();
+
+    // publish post created event to rabbitmq
+    await publishEvent("post.created", {
+      postId: newlyCreatedPost._id.toString(),
+      userId: req.user.userId,
+      content: newlyCreatedPost.content,
+      createdAt: newlyCreatedPost.createdAt,
+    });
+
     // invalidate cache
     await invalidatePostCache(req, newlyCreatedPost._id.toString());
     logger.info("Post created successfully", newlyCreatedPost);
