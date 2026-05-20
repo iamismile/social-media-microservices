@@ -27,7 +27,7 @@ const redisClient = new Redis(process.env.REDIS_URL);
 // DDos protection and rate limiting
 const ratelimiter = new RateLimiterRedis({
   storeClient: redisClient,
-  keyPrefix: "middleware",
+  keyPrefix: "rl:post",
   points: 10,
   duration: 1,
 });
@@ -62,6 +62,7 @@ app.use((req, res, next) => {
   next();
 });
 
+// DDoS protection
 app.use((req, res, next) => {
   ratelimiter
     .consume(req.ip)
@@ -76,8 +77,9 @@ app.use((req, res, next) => {
     });
 });
 
-// sensitive endpoint rate limiter
-app.use("/api/posts/create-post", sensitiveEndpointsLimiter);
+// sustained abuse protection (only for write operation)
+app.post("/api/posts", sensitiveEndpointsLimiter);
+app.delete("/api/posts/:id", sensitiveEndpointsLimiter);
 
 // Routes
 app.use(

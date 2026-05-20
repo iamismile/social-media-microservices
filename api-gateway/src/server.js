@@ -5,6 +5,7 @@ const Redis = require("ioredis");
 const helmet = require("helmet");
 const { rateLimit } = require("express-rate-limit");
 const { RedisStore } = require("rate-limit-redis");
+const { RateLimiterRedis } = require("rate-limiter-flexible");
 const proxy = require("express-http-proxy");
 const logger = require("./utils/logger");
 const errorHandler = require("./middleware/errorHandler");
@@ -16,7 +17,15 @@ const app = express();
 // connect to redis
 const redisClient = new Redis(process.env.REDIS_URL);
 
-// rate limiting
+// DDos protection and rate limiting
+const ratelimiter = new RateLimiterRedis({
+  storeClient: redisClient,
+  keyPrefix: "rl:gateway", // unique prefix for gateway
+  points: 10,
+  duration: 1,
+});
+
+// IP based rate limiting for sensitive endpoint
 const rateLimitOptions = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 50, // max requests per window per IP
@@ -66,6 +75,22 @@ app.use((req, res, next) => {
   next();
 });
 
+// DDoS protection
+app.use((req, res, next) => {
+  ratelimiter
+    .consume(req.ip)
+    .then(() => next())
+    .catch((err) => {
+      logger.warn(`Rate limit exceeded for IP: ${req.ip}`);
+
+      res.status(429).json({
+        success: false,
+        message: "Too many requests",
+      });
+    });
+});
+
+// sustained abuse protection
 app.use(rateLimitOptions);
 
 // setting up proxy for identity service

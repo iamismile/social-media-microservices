@@ -29,8 +29,8 @@ const redisClient = new Redis(process.env.REDIS_URL);
 // DDos protection and rate limiting
 const ratelimiter = new RateLimiterRedis({
   storeClient: redisClient,
-  keyPrefix: "middleware",
-  points: 20, // 20 requests
+  keyPrefix: "rl:search",
+  points: 10, // 10 requests
   duration: 1, // per 1 second
 });
 

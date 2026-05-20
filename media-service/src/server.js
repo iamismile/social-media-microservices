@@ -6,6 +6,7 @@ const helmet = require("helmet");
 const Redis = require("ioredis");
 const { rateLimit } = require("express-rate-limit");
 const { RedisStore } = require("rate-limit-redis");
+const { RateLimiterRedis } = require("rate-limiter-flexible");
 const mediaRoutes = require("./routes/mediaRoute");
 const errorHandler = require("./middleware/errorHandler");
 const logger = require("./utils/logger");
@@ -23,6 +24,14 @@ mongoose
 
 // connect to redis
 const redisClient = new Redis(process.env.REDIS_URL);
+
+// DDos protection and rate limiting
+const ratelimiter = new RateLimiterRedis({
+  storeClient: redisClient,
+  keyPrefix: "rl:media",
+  points: 10,
+  duration: 1,
+});
 
 // IP based rate limiting for sensitive endpoint
 const sensitiveEndpointsLimiter = rateLimit({
@@ -54,8 +63,23 @@ app.use((req, res, next) => {
   next();
 });
 
-// sensitive endpoint rate limiter
-app.use("/api/media", sensitiveEndpointsLimiter);
+// DDoS protection
+app.use((req, res, next) => {
+  ratelimiter
+    .consume(req.ip)
+    .then(() => next())
+    .catch((err) => {
+      logger.warn(`Rate limit exceeded for IP: ${req.ip}`);
+
+      res.status(429).json({
+        success: false,
+        message: "Too many requests",
+      });
+    });
+});
+
+// sustained abuse protection (only for write operation)
+app.post("/api/media/upload", sensitiveEndpointsLimiter);
 
 // Routes
 app.use(`/api/media`, mediaRoutes);
